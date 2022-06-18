@@ -1,0 +1,776 @@
+---
+title: "Tarea BAIN 17/03/2022"
+author: "Héctor Asorey de Pablos"
+date: "2/3/2022"
+---
+
+### Por favor asegúrate de tener **tu** ruta al espacio de trabajo R en el chunk siguiente
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = 'C:/Users/Hector/Desktop/HectorAsorey-BAINTrabajo1')
+
+setwd("C:/Users/Hector/Desktop/HectorAsorey-BAINTrabajo1")
+```
+
+### Es buena práctica cargar al inicio las librerías necesarias para ejecutar el resto del markdown
+
+```{r}
+library(data.table)
+library(stringr)
+library(quanteda)
+library(quanteda.textplots)
+library(quanteda.textstats)
+library(topicmodels)
+library(RColorBrewer)
+library(wordcloud)
+library(ggplot2)
+```
+
+
+# Objetivos de este documento RMarkdown y de la tarea
+
+El objetivo de este documento es proporcionar instrucciones sobre la tarea evaluada #1 de la asignatura BAIN, y a la vez, proporcionar un esquema básico de análisis -al menos de los primeros pasos.
+
+Es *crítico* que dispongas de los objetos R contenidos en los diferentes ficheros .rda subidos al Blackboard. (O que verifiques que tus objetos guardados a partir de las clases contienen la misma información).
+
+# Tarea 1
+
+Se trata de que realices un análisis comparativo de los tweets **sobre un tema de tu elección**. Como es evidente, será más interesante si se trata de un tema frecuente ("popular") en el conjunto total de tweets, y quizás también polémico. Estos temas los puedes encontrar en los bi- y tri-gramas obtenidos en clases anteriores, y que puedes replicar a partir del código en BAIN_22_resumen_preproceso_para_tarea_1.rmd.
+
+El proceso de trabajo sugerido (hay infinidad de maneras de abordarlo) es:
+
+1. Extrae del dataframe con todos los tweets aquel subconjunto que contiene el tema (o temas) que te interesen.
+2. Crea un corpus con ese subconjunto (y limpia la memoria para evitar colapsos) y añade los metadatos (docvars).
+3. Limpia de stopwords y en general de aquellos tokens que no te añaden información o significado.
+4. Genera bi- o tri-gramas a partir de los tokens limpiados y muestra la frecuencia relativa de los mismos.
+
+Hasta aquí el resultado supone 5 puntos en el trabajo.
+
+5. Genera los tokens por separado para distintas categorías de tweets (campo Category que se ha introducido como metadato), o por fechas (a partir de la fecha introducida como metadato) y haz una comparación entre ambos a partir de objetos bi- o tri-gramas. 
+6. Genera wordclouds comparativos y extrae conclusiones.
+
+Estos dos puntos suponen otros 2 puntos adicionales al trabajo.
+
+7. Realiza un análisis estadístico de corpus o genera tópicos (topicmining) como veremos en clase.
+8. Realiza visualizaciones que permitan extraer conclusiones significativas a partir del proceso.
+
+Estos dos puntos suponen otros 2 puntos (hasta 9 sobre 10) del trabajo.
+
+Y un último punto lo otorgaré por la calidad general del documento entregado. 
+
+POR FAVOR LA ENTREGA DEBE SER UN RMARKDOWN *O* COMO ÚNICA ALTERNATIVA, UN SCRIPT .R CON UN .DOC O .PDF O .PPT ASOCIADO
+
+Se pretende realizar un análisis del tema "Obama" en las elecciones estadounidenses del 2016.
+
+En primer lugar, se debe cargar el objeto rda obtenido en clase.
+
+```{r}
+load("trollstot_dia4.rda")
+```
+
+
+Vamos a crear un objeto dfm a partir de una matriz general, en la cual solo almacenaremos aquellos registros en los cuales esté presente la palabra obama en el contenido.
+
+Para trabajar mejor, y no preocuparnos por si está escrito "obama", "Obama", "OBAMA" o cualquier otra variación de mayúsculas y minúsculas, convertimos todo en la columna contenido a minúsculas.
+
+
+```{r}
+obama <- nuevo_objeto2[grep("obama", tolower(nuevo_objeto2$content)), ]
+
+dim(obama)
+```
+
+
+Hemos obtenido una dfm con 42412 filas. Lo siguiente a hacer es convertir esa dfm a un corpus de quanteda.
+
+
+```{r}
+obama_corpus <- corpus(obama$content)
+summary(obama_corpus)
+```
+
+
+Añadimos a este corpus los metadatos relevantes para el análisis, en este caso, la categoría del tweet (si es de izquierdas (LeftTroll), derechas(RightTroll), de incitacioón al miedo(FearMonger)...), si es un retweet y la fecha de publicación del tweet.
+
+
+```{r}
+docvars(obama_corpus,"Category") <- obama$account_category
+docvars(obama_corpus,"Retweet") <- obama$retweet
+docvars(obama_corpus,"Date_published") <- obama$publish_date
+```
+
+
+Una vez añadidos los metadatos al corpus, vamos a reducir los datos que vamos a tratar, creando un nuevo corpus a parir del anterior en el cual el metadato retweet es falso (igual a 0).
+
+
+```{r}
+obama_corpus_sin_retweets <- corpus_subset(obama_corpus, Retweet == 0)
+
+length(obama_corpus)
+length(obama_corpus_sin_retweets)
+```
+
+
+Ahora, vamos a generar tokens a partir de ese corpus, para posteriormente ver cuáles son las palabras que más se repiten y más adelante hacer bigramas (dos tokens juntos) y trigramas (tres tokens juntos).
+
+Añadimos la opción de "remove_punct" para que nos elimine los símbolos de exclamación ("!", "¡", "?", "¿"), pero no activamos ni "remove_numbers" por si eliminasemos datos relevantes (por ejemplo un hashtag con alguna fecha) o remove_symbols, para no eliminar ni "#" ni "@" (topics y menciones de Twitter).
+
+Los símbolos los trataremos con las stopwords.
+
+
+```{r}
+obama_tokens <- tokens(obama_corpus_sin_retweets, remove_punct = TRUE)
+```
+
+
+Vamos a eliminar de esos tokens estructuras muy repetidas pero sin valor significativo (preposiciones, construcciones...), y vamos a añadir algunas propias, como símbolos innecesarios para lograr mayor precisión en el análisis
+
+
+```{r}
+mystopwords <- c(stopwords("english"),
+                 "im",
+                 "t",
+                 "r",
+                 as.character(seq.int(from = 0, to = 9)),
+                 "rt",
+                 "|",
+                 "/",
+                 #Aqui antes habia una @
+                 "\ ",
+                 ".",
+                 ",",
+                 "_",
+                 "'",
+                 ";",
+                 "`",
+                 ":",
+                 "~"
+                 )
+```
+
+
+Creamos un conjunto de tokens sin las stopwords que hemos considerado.
+
+
+```{r}
+toks_nostop <- tokens_select(obama_tokens,
+                             pattern = mystopwords,
+                             selection = "remove")
+```
+
+
+Creamos bigramas de estos tokens
+
+
+```{r}
+bigramas_obama <- tokens_ngrams(toks_nostop, 2)
+```
+
+
+Convertimos esos bigramas a matrices dfm para poder hacer las wordclouds para ver estos datos de forma más gráfica
+
+
+```{r}
+matriz_obama_bi <- dfm(bigramas_obama)
+topfeatures(matriz_obama_bi, 100)
+```
+
+
+Creamos trigramas a partir de los tokens
+
+
+```{r}
+trigramas_obama <- tokens_ngrams(toks_nostop, 3)
+```
+
+
+Convertimos los trigramas a una matriz dfm, para su posterior visualizacion en wordclouds
+
+
+```{r}
+matriz_obama_tri <- dfm(trigramas_obama)
+topfeatures(matriz_obama_tri, 100)
+```
+
+
+Wordcloud de los trigramas. Mostramos solo los 50 trigramas más recurrentes.
+
+
+```{r}
+textplot_wordcloud(matriz_obama_tri, rotation = 0, max_words = 50)
+```
+
+
+A partir de aquí, ya podemos empezar a sacar algunas conclusiones, analizando los temas por separado:
+-obamacare es un sistema de "salud pública" estadounidense aprobado por Obama, el cual Trump quería derogar.
+-BlackLivesMatter es un movimiento social, el cual busca la igualdad entre negros y blancos en EEUU. Tomó gran relevancia en 2020, con la muerte de George Floyd a manos de la policía.
+-Benghazi, o en español Bengasi, es una ciudad de Libia. En 2012 un grupo paramilitar islámico atacó dos edificios estadounidenses, un consulado y un edificio de la CIA, y donde se desplegó un equipo de operaciones especiales americano. Hubo cuatro fallecidos estadounidenses, entre ellos el embajador en Libia. Esto provocó una división política en EEUU, en el que los republicanos acusaron a Hillary Clinton (por entonces Secretaria de Estado con Obama) de una lenta respuesta militar.
+-Irán. Obama logró el pacto nuclear con Irán, por el cual este país renunciaba a desarrollar armas nucleares y las sanciones económicas impuestas por EEUU y la UE serían levantadas. Este pacto se creó en 2015, poniéndose en marcha en 2016. Con la administración Trump, este pacto se abandonó.
+-TeaParty es un movimiento conservador dentro del partido republicano
+
+Como podemos ver, aparecen temas políticamente muy importantes y controvertidos, de los cuales los rusos supieron aprovecharse para inferir en las elecciones del 2016
+
+
+Wordcloud de los bigramas. Mostramos los 100 bigramas más recurrentes.
+
+
+```{r}
+textplot_wordcloud(matriz_obama_bi, rotation = 0, max_words = 100)
+```
+
+
+Como podemos ver, en los bigramas también se encuentran temas muy relevantes:
+-Obama, presidente de los Estados Unidos durante dos legislaturas, el máximo estipulado por la Constitución de EEUU que alguien puede ser presidente. Si hablamos de Obama, está claro que tenía que tener mucha relevancia como muestra el word cloud.
+-Hillary Clinton, Secretaria de Estado con Obama entre 2009 y 2013, y candidata a las elecciones de 2016, que recibió el apoyo de Obama.
+-Gun Control (Control de armas). Obama era defensor de aprobar un control más estricto sobre las armas, debido a tiroteos, entre los que destacan infamemente los escolares. Idea contraria a los republicanos.
+-Donald Trump. Presidente de los EEUU tras Obama, al cual Trump tenía mucho desprecio.
+-Islamic State. Durante esos años se vivieron muchos atentados terroristas en Europa por parte del ISIS. Esto lo usaría Trump para justificar su política migratoria, en la cual Trump quiso impedir la entrada a EEUU de cualquier persona de religión musulmana. Este veto fue bloqueado por tribunales en distintos estados, aunque finalmente lo avaló el Tribunal Supremo.
+
+Se pueden ver temas vistos anteriormente en los trigramas como el "healthcare/obamacare", "iran nuclear"...
+
+
+Diferenciamos ahora las palabras que más se repiten distinguiendo por categoría los tweets.
+De esta manera podemos comparar qué utilizaban los trolls de izquierdas y qué utilizaban los trolls de derechas.
+
+
+```{r}
+corpus_subset(obama_corpus_sin_retweets, 
+              Category %in% c("RightTroll", "LeftTroll")) %>%
+    tokens(remove_punct = TRUE) %>%
+    tokens_remove(mystopwords) %>%
+    dfm() %>%
+    dfm_group(groups = Category) %>%
+    dfm_trim(min_termfreq = 50, verbose = FALSE) %>%
+    textplot_wordcloud(comparison = TRUE)
+```
+
+
+Podemos ver que los trolls de izquierdas referenciaban temas más progresistas, como puede ser el "BlackLivesMatter" o el "I Love Obama", ya que, por analogía con la política española, los demócratas serían de izquierdas y los republicanos de derechas.
+
+Por otro lado, desde los trolls de derechas podemos ver "teaparty", "muslim", "Putin", "IslamKills", "terrorist", "trump 2016"...
+
+
+Comparemos ahora las categorias "RightTroll", "LeftTroll" y "NewsFeed". Asumo que la categoría "NewsFeed" hace referencia a tweets publicados por la prensa.
+
+```{r}
+corpus_subset(obama_corpus_sin_retweets, 
+              Category %in% c("RightTroll", "LeftTroll", "NewsFeed")) %>%
+    tokens(remove_punct = TRUE) %>%
+    tokens_remove(mystopwords) %>%
+    dfm() %>%
+    dfm_group(groups = Category) %>%
+    dfm_trim(min_termfreq = 50, verbose = FALSE) %>%
+    textplot_wordcloud(comparison = TRUE)
+```
+
+
+Ahora veremos cuánta importancia tiene cada categoría. Empezemos por los trolls de derechas
+
+
+```{r}
+obama_rightTrolls <- corpus_subset(obama_corpus_sin_retweets, Category == "RightTroll")
+
+ndoc(obama_rightTrolls)
+ndoc(obama_rightTrolls)/ndoc(obama_corpus_sin_retweets)
+```
+
+
+Como podemos ver, los trolls de derechas tienen una gran importancia en el tema Obama, lo cual tiene mucho sentido, ya que, como hemos mencionado antes, Obama sería de izquierdas y lo más lógico es atacarle desde una idealogía de derechas.
+
+
+```{r}
+obama_leftTrolls <- corpus_subset(obama_corpus_sin_retweets, Category == "LeftTroll")
+
+length(obama_leftTrolls)
+ndoc(obama_leftTrolls)/ndoc(obama_corpus_sin_retweets)
+```
+
+
+Sin embargo, los trolls de izquierdas son irrelevantes en comparación con los de derechas, por lo expuesto anteriormente.
+
+
+```{r}
+obama_newsfeed <- corpus_subset(obama_corpus_sin_retweets, Category == "NewsFeed")
+
+length(obama_newsfeed)
+ndoc(obama_newsfeed)/ndoc(obama_corpus_sin_retweets)
+```
+
+
+Como podemos ver, News Feed también tiene mucha importancia
+
+
+```{r}
+obama_fearmonger <- corpus_subset(obama_corpus_sin_retweets, Category == "Fearmonger")
+
+length(obama_fearmonger)
+ndoc(obama_fearmonger)/ndoc(obama_corpus_sin_retweets)
+```
+
+
+FearMonger por el contrario, es irrelevante.
+
+
+Vamos ahora a realizar un wordcloud usando topicmodels. Primero vamos a ver qué temas (primero con los bigramas) son importantes previos a las elecciones estadounidenses del 8 de noviembre de 2016.
+
+Vamos a guadarlo en una imagen png para poder visualizarlo mejor
+
+
+```{r}
+right_tokens_bigrams <- tokens_subset(bigramas_obama,
+                                      (Category == "RightTroll" &
+                                        Date_published < '2016-11-08'))
+
+
+matrizObamaAux <- dfm(right_tokens_bigrams)
+
+quant_dfm <- dfm_trim(matrizObamaAux, 
+                      min_termfreq = 10)
+
+set.seed(100)
+if (require(topicmodels)) {
+   my_lda_fit12 <- LDA(convert(quant_dfm, to = "topicmodels"), 
+                       k = 8)
+   get_terms(my_lda_fit12, 5)
+}
+```
+
+
+```{r}
+kk <- my_lda_fit12@beta
+# Generamos una matriz de dimensiÃ³n k (tÃ³picos) = 12 y n tokens (70k)
+class(kk)
+dim(kk)
+# Para poder dibujar los wordclouds ponemos el token como nombre de columna
+colnames(kk) <- my_lda_fit12@terms
+kk[, 5:10]
+#head(kk)
+
+# We define the matrix of plots
+# How to do this well explained here
+# http://www.statmethods.net/advgraphs/layout.html
+# 2 colums * 1500 = 3000 width
+# 4 rows * 800 = 3200 height
+
+png(file="ObamaRightTrollsBeforeElections.png",
+    width=3000,
+    height=3200,
+    res = 300,
+    bg = "black")
+
+par(mfrow=c(4, 2))
+
+for (k in 1:length(kk[,1])) {
+  
+  topic1 <- kk[k,]
+  
+  v <- topic1
+  
+  # utilizando rank pasamos el beta numÃ©rico a orden (entero, positivo)
+  d <- data.frame(word = names(v), rank= rank(v))
+  
+  # ordenamos descendente (por defecto -sin el "-" es ascendente)
+  d <- d[order(-d$rank),]
+  
+  # normalizamos (parecido a una frecuencia de palabras) +100 para que tenga rango amplio
+  d$freq <- d$rank - max(d$rank) + 100
+
+    # Now with a prettier layout
+  # baed on code published in
+  # http://onertipaday.blogspot.com.es/2011/07/word-cloud-in-r.html
+  #plot.new()
+  
+  pal2 <- brewer.pal(11,"Spectral")
+  wordcloud(d$word,
+            d$freq, 
+# scale nos da la diferencia relativa (mÃ¡x mÃ­n) entre tamaÃ±os de palabras
+            scale = c(1.2, 0.05),
+# max.words las que quepan
+            max.words = 100, 
+            random.order = FALSE, 
+            rot.per = 0, 
+            colors = pal2,
+            random.color = TRUE)
+  title(main = paste(k),
+        font = 10,
+        col.main = "yellow")
+}
+
+
+dev.off()
+```
+
+
+Se repiten temas que ya hemos visto previamente, entre ellos "iran nuclear", "teaparty", "islam kills", "benghazi", "gun control", "obamacare"...
+
+A destacar otros temas como Michelle Obama, primera dama de EEUU que tuvo gran repercusión en EEUU. También se referencia 2a o la Segunda Enmienda, la cual establece el derecho del pueblo estadounidense a poseer armas, altamente relacionado con ese tema del "Gun Control". También sale como tema "n-word" (nigger), palabra con un alto significado racista hacia los negros. Algo que puede tener relación con estos dos temas puede ser el "Charleston Shooting", donde se produjo un tiroteo en una iglesia y murieron 9 personas afroamericanas. Se referencian muchos temas relacionados con el Islam y las grupos terroristas, como pueden ser "Islam Kills", "Stop Islam", "Islamic State", "defeat ISIS", "obama muslim"... Se puede pensar que se referencia a Sadam Hussein (pro ejemplo en "obama_"hussein") dictador de Irak capturado por una coalición liderada por EEUU en 2003, mismo año en el que se produce la invasión americana de este país ("irak troops" sí aparece), aunque Obama no era el presidente por entonces, sino George W. Bush, pero en realidad hace referencia al nombre completo de Obama (Barack Hussein Obama II). Ben Carson aparece como tema, político republicano que afirmamaba que a Obama "se le crió como a un blanco". "TCOT" también aparece, siglas que significan "Top conservatives on Twitter". Otros temas interesantes son "illegal inmigrants" y "dreamers", los cuales tienen mucha relación, pues dreamers hace referencia a un programa para regularizar a inmigrantes irregulares menores de edad, "syrian refugees", o en mi opinión, uno de los más interesantes, "illegal_obama". Trump puso un tweet diciendo: "How amazing, the State Health Director who verified copies of Obama’s ‘birth certificate’ died in plane crash today. All others lived", insinuando que la partida de nacimiento de Obama es falsa, insinuando también que no es ciudadano estadounidense, por tanto, no podría haber sido presidente. Mitt Romney fue candidato republicano en 2012 a las elecciones estadounidenses, y senador de los EEUU en contra de Trump. Aparece también Bin Laden, pues fue en la administración Obama cuando se llevo a cabo una operación especial para su eliminación.
+
+
+A continuación haré lo mismo, pero con los tweets de trolls de derechas tras las elecciones
+
+
+```{r}
+right_tokens_bigrams_after <- tokens_subset(bigramas_obama,
+                                      (Category == "RightTroll" &
+                                        Date_published >= '2016-11-08'))
+
+
+matrizObamaAuxAfter <- dfm(right_tokens_bigrams_after)
+
+quant_dfm <- dfm_trim(matrizObamaAuxAfter, 
+                      min_termfreq = 10)
+
+set.seed(100)
+if (require(topicmodels)) {
+   my_lda_fit12 <- LDA(convert(quant_dfm, to = "topicmodels"), 
+                       k = 8)
+   get_terms(my_lda_fit12, 5)
+}
+
+kk <- my_lda_fit12@beta
+# Generamos una matriz de dimensiÃ³n k (tÃ³picos) = 12 y n tokens (70k)
+class(kk)
+dim(kk)
+# Para poder dibujar los wordclouds ponemos el token como nombre de columna
+colnames(kk) <- my_lda_fit12@terms
+kk[, 5:10]
+#head(kk)
+
+# We define the matrix of plots
+# How to do this well explained here
+# http://www.statmethods.net/advgraphs/layout.html
+# 2 colums * 1500 = 3000 width
+# 4 rows * 800 = 3200 height
+
+png(file="obamaRightTrollsAfterElections.png",
+    width=3000,
+    height=3200,
+    res = 300,
+    bg = "black")
+
+par(mfrow=c(4, 2))
+
+for (k in 1:length(kk[,1])) {
+  
+  topic1 <- kk[k,]
+  
+  v <- topic1
+  
+  # utilizando rank pasamos el beta numÃ©rico a orden (entero, positivo)
+  d <- data.frame(word = names(v), rank= rank(v))
+  
+  # ordenamos descendente (por defecto -sin el "-" es ascendente)
+  d <- d[order(-d$rank),]
+  
+  # normalizamos (parecido a una frecuencia de palabras) +100 para que tenga rango amplio
+  d$freq <- d$rank - max(d$rank) + 100
+
+    # Now with a prettier layout
+  # baed on code published in
+  # http://onertipaday.blogspot.com.es/2011/07/word-cloud-in-r.html
+  #plot.new()
+  
+  pal2 <- brewer.pal(11,"Spectral")
+  wordcloud(d$word,
+            d$freq, 
+# scale nos da la diferencia relativa (mÃ¡x mÃ­n) entre tamaÃ±os de palabras
+            scale = c(1.2, 0.05),
+# max.words las que quepan
+            max.words = 100, 
+            random.order = FALSE, 
+            rot.per = 0, 
+            colors = pal2,
+            random.color = TRUE)
+  title(main = paste(k),
+        font = 10,
+        col.main = "yellow")
+}
+
+
+dev.off()
+```
+
+
+Destacaré ahora temas que no habían salido hasta ahora.
+
+"traitor mccain", el cual analizamos en clase. McCain fue un senador republicano, héroe de guerra estadounidense, que estaba en contra de Trump. Otro senador republicano que también aparece por lo mismo es Jeff Flake. Se referencia a Charlottesville. Esto es porque en esta ciudad de Virginia, hubo un altercado con ultranacionalistas debido a que se votó a favor de quitar estatuas de generales confederados. Obama respondió con un tweet que se hizo super viral, rompiendo por entonces el record de tweet con más likes. También aparece Dick Morris, un escritor sobre política que comentó que Obama era como un dictador dentro del partido demócrata, y que quería alcanzar la permanencia en el poder. Corea del Norte aparace debido a las amenazas a EEUU, incluyendo las nucleares. Trump comentó sobre esto que Obama le confesó que casi entra en guerra contra Corea del Norte. Aparace Susan Rice, National Security Advisor (consejera de Seguridad Nacional) con Obama, a la que se acusó de espionaje al entorno de Trump. Por último, destacar que se nombre a George Soros ("obama_soros"), multimillonario a favor del partido demócrata.
+
+Destaco a título personal el tema "mad max". Me ha sorprendido mucho ver una película clásica como tema, pero he entendido su significado dentro del contexto del pacto nuclear con Irán. Los sucesos de Mad Max ocurrían en el Páramo, una tierra desolada tras una guerra nuclear.
+
+Añadir que tanto previo como tras las elecciones, un tema recurrente es Donald Trump ("president_trump", "donald_trump"...).
+
+
+A continuación, se va a repetir este mismo proceso, pero esta vez con trigramas. Empezaré de nuevo por los tweets previos a las elecciones de 2016.
+
+```{r}
+right_tokens_trigrams_before <- tokens_subset(trigramas_obama,
+                                      (Category == "RightTroll" &
+                                        Date_published < '2016-11-08'))
+
+
+matrizObamaAuxTriBefore <- dfm(right_tokens_trigrams_before)
+
+quant_dfm <- dfm_trim(matrizObamaAuxTriBefore, 
+                      min_termfreq = 10)
+
+set.seed(100)
+if (require(topicmodels)) {
+   my_lda_fit12 <- LDA(convert(quant_dfm, to = "topicmodels"), 
+                       k = 8)
+   get_terms(my_lda_fit12, 5)
+}
+
+kk <- my_lda_fit12@beta
+# Generamos una matriz de dimensiÃ³n k (tÃ³picos) = 12 y n tokens (70k)
+class(kk)
+dim(kk)
+# Para poder dibujar los wordclouds ponemos el token como nombre de columna
+colnames(kk) <- my_lda_fit12@terms
+kk[, 5:10]
+#head(kk)
+
+# We define the matrix of plots
+# How to do this well explained here
+# http://www.statmethods.net/advgraphs/layout.html
+# 2 colums * 1500 = 3000 width
+# 4 rows * 800 = 3200 height
+
+png(file="obamaRightTrollsBeforeElectionsTrigrama.png",
+    width=5000,
+    height=5000,
+    res = 300,
+    bg = "black")
+
+par(mfrow=c(4, 2))
+
+for (k in 1:length(kk[,1])) {
+  
+  topic1 <- kk[k,]
+  
+  v <- topic1
+  
+  # utilizando rank pasamos el beta numÃ©rico a orden (entero, positivo)
+  d <- data.frame(word = names(v), rank= rank(v))
+  
+  # ordenamos descendente (por defecto -sin el "-" es ascendente)
+  d <- d[order(-d$rank),]
+  
+  # normalizamos (parecido a una frecuencia de palabras) +100 para que tenga rango amplio
+  d$freq <- d$rank - max(d$rank) + 100
+
+    # Now with a prettier layout
+  # baed on code published in
+  # http://onertipaday.blogspot.com.es/2011/07/word-cloud-in-r.html
+  #plot.new()
+  
+  pal2 <- brewer.pal(11,"Spectral")
+  wordcloud(d$word,
+            d$freq, 
+# scale nos da la diferencia relativa (mÃ¡x mÃ­n) entre tamaÃ±os de palabras
+            scale = c(1.2, 0.05),
+# max.words las que quepan
+            max.words = 50, 
+            random.order = FALSE, 
+            rot.per = 0, 
+            colors = pal2,
+            random.color = TRUE)
+  title(main = paste(k),
+        font = 10,
+        col.main = "yellow")
+}
+
+
+dev.off()
+```
+
+
+Con esto también podemos ver temas nuevos como las elecciones israelíes, donde destaca Benjamin Netanyahu, amigo cercano de Donald Trump e investigado por corrupción y condenado en 2019. A tener en cuenta la relación entre Israel y Trump, ya que cuando éste llegó a la presidencia nombró a Jerusalén capital de Israel en 2017. Netanyahu y Trump estaban de acuerdo en abandonar el pacto nuclear con Irán. También aparece Ted Cruz, candidato de las primarias republicanas a la presidencia de EEUU, donde perdió frente a Donald Trump.
+
+
+Ahora veremos los trigramas populares tras las elecciones
+
+
+```{r}
+right_tokens_trigrams_after <- tokens_subset(trigramas_obama,
+                                      (Category == "RightTroll" &
+                                        Date_published >= '2016-11-08'))
+
+
+matrizObamaAuxTriAfter <- dfm(right_tokens_trigrams_after)
+
+quant_dfm <- dfm_trim(matrizObamaAuxTriAfter, 
+                      min_termfreq = 10)
+
+set.seed(100)
+if (require(topicmodels)) {
+   my_lda_fit12 <- LDA(convert(quant_dfm, to = "topicmodels"), 
+                       k = 8)
+   get_terms(my_lda_fit12, 5)
+}
+
+kk <- my_lda_fit12@beta
+# Generamos una matriz de dimensiÃ³n k (tÃ³picos) = 12 y n tokens (70k)
+class(kk)
+dim(kk)
+# Para poder dibujar los wordclouds ponemos el token como nombre de columna
+colnames(kk) <- my_lda_fit12@terms
+kk[, 5:10]
+#head(kk)
+
+# We define the matrix of plots
+# How to do this well explained here
+# http://www.statmethods.net/advgraphs/layout.html
+# 2 colums * 1500 = 3000 width
+# 4 rows * 800 = 3200 height
+
+png(file="obamaRightTrollsAfterElectionsTrigrama.png",
+    width=5000,
+    height=5000,
+    res = 300,
+    bg = "black")
+
+par(mfrow=c(4, 2))
+
+for (k in 1:length(kk[,1])) {
+  
+  topic1 <- kk[k,]
+  
+  v <- topic1
+  
+  # utilizando rank pasamos el beta numÃ©rico a orden (entero, positivo)
+  d <- data.frame(word = names(v), rank= rank(v))
+  
+  # ordenamos descendente (por defecto -sin el "-" es ascendente)
+  d <- d[order(-d$rank),]
+  
+  # normalizamos (parecido a una frecuencia de palabras) +100 para que tenga rango amplio
+  d$freq <- d$rank - max(d$rank) + 100
+
+    # Now with a prettier layout
+  # baed on code published in
+  # http://onertipaday.blogspot.com.es/2011/07/word-cloud-in-r.html
+  #plot.new()
+  
+  pal2 <- brewer.pal(11,"Spectral")
+  wordcloud(d$word,
+            d$freq, 
+# scale nos da la diferencia relativa (mÃ¡x mÃ­n) entre tamaÃ±os de palabras
+            scale = c(1.2, 0.05),
+# max.words las que quepan
+            max.words = 50, 
+            random.order = FALSE, 
+            rot.per = 0, 
+            colors = pal2,
+            random.color = TRUE)
+  title(main = paste(k),
+        font = 10,
+        col.main = "yellow")
+}
+
+
+dev.off()
+```
+
+
+De aquí sobresale como nuevo tema "clinton_tarmac_meeting". Esto es muy interesante, pues está relacionado con la investigación del FBI a Hillary Clinton en 2016 por el uso de un servidor de correo no autorizado. Parece ser que Bill Clinton, marido de Hillary Clinton y expresidente de EEUU, y la por entonces fiscal general de Estados Unidos, Loretta Lynch, se reunieron. Al final, la investigación del FBI concluyó que había sido una temeridad, pero no un delito. Trump se aprovechó de esta investigación a Hillary.
+
+
+Voy a hacer ahora un gráfico de frecuencias para ver qué bigramas son los que más se repiten, para comprobar si se puede extraer algún tema relevante más. Primero empezaré por los RightTrolls previos a las elecciones.
+
+
+```{r}
+matrizObamaAux %>% 
+  textstat_frequency(n = 15) %>% 
+  ggplot(aes(x = reorder(feature, frequency), 
+             y = frequency)) +
+  geom_point() +
+  coord_flip() +
+  labs(x = NULL, 
+       y = "Frequency") +
+  theme_minimal()
+```
+
+
+Ahora haré lo mismo pero tras las elecciones
+
+
+```{r}
+matrizObamaAuxAfter %>% 
+  textstat_frequency(n = 15) %>% 
+  ggplot(aes(x = reorder(feature, frequency), 
+             y = frequency)) +
+  geom_point() +
+  coord_flip() +
+  labs(x = NULL, 
+       y = "Frequency") +
+  theme_minimal()
+```
+
+
+Comprobamos que aquí salen varios temas que ya hemos analizado previamente, pero sobresale uno que no hemos mencionado: "malia_obama". Malia Ann Obama es una de las hijas de Obama, la cual fue becaria de la productora de cine de los hermanos Weinstein. Tras la quiebra de ésta, se reveló que la productora debía dinero a muchas personas como a los actores Robert de Niro o Jennifer Lawrence y a Malia Obama. Weinstein protagonizó un escándalo de abusos sexuales a nivel mundial, en el que se viralizó el movimiento "Me Too", que denunciaba los abusos de este productor.
+
+
+Voy a visualizar a continuación qué bigramas son los que más se repiten independientemente de la fecha 
+
+
+```{r}
+right_tokens_bigrams_noDate <- tokens_subset(bigramas_obama,
+                                      (Category == "RightTroll"))
+
+
+matrizObamaAuxNoDate <- dfm(right_tokens_bigrams_noDate)
+
+
+matrizObamaAuxNoDate %>% 
+  textstat_frequency(n = 15) %>% 
+  ggplot(aes(x = reorder(feature, frequency), 
+             y = frequency)) +
+  geom_point() +
+  coord_flip() +
+  labs(x = NULL, 
+       y = "Frequency") +
+  theme_minimal()
+```
+
+
+Me gustaría también saber qué hashtags eran los más populares entre trolls de derechas y de izquierdas, y compararlos de forma directa.
+
+
+```{r}
+trolls_interesantes <- tokens_subset(obama_tokens,
+                                     Category %in% c("RightTroll", "LeftTroll"))
+
+tags <- tokens_select(trolls_interesantes, 
+                      pattern = "#*")
+
+matriz_compara <- dfm(tags) %>% 
+    dfm_group(groups = Category)
+  
+# create wordcloud
+set.seed(132) # set seed for reproducibility
+
+# Usamos escala de color como en topicmodels
+# requiere library(RColorBrewer)
+# Color palettes here
+# https://www.r-graph-gallery.com/38-rcolorbrewers-palettes.html
+
+library(RColorBrewer)
+
+pal2 <- brewer.pal(3,"Set1")
+
+textplot_wordcloud(matriz_compara, 
+                   comparison = TRUE, 
+                   max_words = 200,
+                   color = pal2,
+                   rotation = 0)
+```
+
+
+Comprobamos que los trolls de izquierdas usaban temas cercanos a la política demócrata. Esto se ve reflejado en que lo más usado es "BlackLivesMatter". Otros a destacar también son "blacktwitter", "slavery", "negro", "iloveobama", "blackhistorymonth", "blm" (abreviatura de Black Lives Matter).
+Entre la derecha utilizan temas como "2a" (second amendment), "tcot", "islamkill", "iloveobama" (supongo que de manera irónica), "teaparty", "vegasgopdebate" (donde se destaca que todos los candidatos estaban de acuerdo en que la administración Obama no había sido capaz de mantener a salvo a los estadounidenses, y donde hubo mucha división entre los candidatos, entre ellos, Donald Trump), "nobama", "patriot", "wakeupamerica", entre otros.
+
+
+De este análisis, podemos concluir que los rusos tenían un gran conocimiento acerca de los temas de actualidad estadounidenses, y cómo utilizarlos en su beneficio. El caso de la inferencia rusa en las elecciones estadounidenses de 2016 nos hizo ver lo mucho que puede dañar una campaña de desinformación masiva, y como los rusos han manipulado a favor de sus intereses en redes sociales, como se ha podido ver en otros momentos (como por ejemplo con el tema independentista catalán o las elecciones francesas de 2017). 
+No es de extrañar que Donald Trump y Putin tuviesen buena relación, pues al fin y al cabo, Putin ayudó a Trump a ganar las elecciones de 2016. 
+En esta "era de la información", debemos estar más atentos que nunca a la desinformación, sobretodo en una época en la que si un tweet dice: "Hemos llegado a Marte", y tiene muchos likes y retweets, la gente se creerá que es cierto sin contrastar esa información.
