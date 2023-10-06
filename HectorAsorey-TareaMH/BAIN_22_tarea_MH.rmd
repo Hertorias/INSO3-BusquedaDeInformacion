@@ -1,0 +1,803 @@
+---
+title: "Tarea extra MH BAIN 25/05/2022"
+author: "Hector Asorey de Pablos"
+date: "25/05/2022"
+output: word_document
+---
+
+### Por favor asegúrate de tener **tu** ruta al espacio de trabajo R en el chunk siguiente
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+knitr::opts_knit$set(rooroot.dir = 'C:/Users/Hector/Desktop/TareaMH')
+
+```
+
+### Es buena práctica cargar al inicio las librerías necesarias para ejecutar el resto del markdown
+
+```{r}
+library(data.table)
+library(stringr)
+library(quanteda)
+library(quanteda.textplots)
+library(quanteda.textstats)
+library(quanteda.textmodels)
+library(igraph)
+library(ggplot2)
+library(dplyr)
+```
+
+
+# Objetivos de este documento RMarkdown y de la tarea
+
+El objetivo de este documento es concretar un trabajo muy especial, como es el de decidir la MH de la asignatura BAIN entre un selecto grupo de candidatos. Esta tarea espero esté bien diseñada para *no debe ser especialmente trabajosa en tiempo*, sí en originalidad y rapidez con los conceptos y metodologías Text Mining y SNA. 
+
+Es inevitable extenderse sobre el tema del que trata la tarea. Y es sobre los "hashtag games" del conjunto de trolls que se han analizado en la parte de Text Mining. De todas las categorías contenidas en este dataset esta es la más peculiar. 
+
+El dataset fue recopilado y clasificado por dos profesores de la Clemson University: Darren Linvill and Patrick Warren. Estos dos profesores publicaron un paper (el enlace muestra el paper provisional, desconozco si ha habido alguna edición o publicación adicional):
+
+https://pwarren.people.clemson.edu/Linvill_Warren_TrollFactory.pdf
+
+Hay que señalar la diferencia que establecen entre "account category" y "handle". Este último concepto es equivalente al de "usuario twitter". La primera pregunta es ¿un mismo handle pertenece a varias "account category"? 
+
+Después de una descripción de los métodos de clasificación (sin ninguna referencia a modelos de clasificación tipo "Machine Learning") estos autores concluyen que:
+
+"With the exception of the Fearmonger category, handles were consist and did not switch between categories."
+
+La categoría "Hashtag Gamer" está descrita del siguiente modo:
+
+Hashtag Gamer (110 handles, 216,895 tweets, M = 1955.31, SD = 3176.10). These handles are dedicated almost entirely to playing hashtag games, a popular word game played on Twitter. Users add a hashtag to a tweet (e.g., #ThingsILearnedFromCartoons) and then answer the
+implied question (Haskell, 2015). These handles also posted tweets that seemed organizational regarding these games, e.g. @AmandaVGreen’s quote tweet, August 31, 2016, “15 minutes till we play @TheHashtagGame with @HashtagRoundup & @HashtagZoo! Who's ready to #hashtag!”. 
+
+Many of these tweets were mundane, including @DonnieLMiller, April 12, 2017, “#OffendEveryoneIn4Words fart in your face.” Others, however, often using the same hashtag, were socially divisive, including @DonnieLMiller, April 12, 2017: “#OffendEveryoneIn4Words
+undocumented immigrants are ILLEGALS.” Many tweets from Hashtag Gamers were overtly political, e.g. @LoraGreeen, July 11, 2015, “#WasteAMillionIn3Words Donate to #Hillary”.
+
+While many tweets shared themes seen in the Right Troll category, Left Troll themes also appeared, e.g., @LoraGreeen, January 25, 2016, “#ItsSoWhiteOutsideThat Donald Trump thought it was a meeting of his followers.”
+
+Alguna referencia adicional sobre los hashtag games:
+https://www.thundertech.com/blog-news/march-2015/hashtag-games-the-hunger-games-of-social-media
+
+Este tema de hashtag games es relativamente poco conocido (desde luego para mi como usuario absolutamente remoto de las redes sociales) pero resulta interesante. En resumen: se trata de encontrar un tag "simpático" o "resultón" que se propague con facilidad, complementándolo con contenido que va desde lo "graciosillo" a lo directamente insultante.
+
+Estaría genial poder hacer esa clasificación por contenido, pero desde luego se me antoja extraordinariamente difícil y desde luego costoso en tiempo. Pero sí que me parece abordable extraer los "hashtag_games" del conjunto de trolls, prepararlo de forma rápida y crear un grafo con el que poder abordar una serie de preguntas (entre otras muchas que estoy seguro que se os ocurrirán en el proceso de análisis).
+
+Las preguntas para guiar el análisis (la extracción de conocimiento que es de lo que trata este trabajo) al final, después de cargar y dejar el dataset "compacto" para análisis.
+
+POR FAVOR sed conscientes que no se ha hecho ninguna limpieza de caracteres especiales para dejar los hashtags tal cual aparecen (p.ej. #2016In4Words)
+
+# 1. Carga del conjunto base de trolls
+
+Debemos cargar el conjunto de trolls con el texto sin filtrar para poder conservar los tags (todo lo que comienza por #)
+
+```{r}
+load('todos_los_trolls.rda')
+dim(trollstot)
+summary(trollstot)
+
+```
+
+Extraemos los hashtag_games
+
+```{r}
+
+games <- trollstot[trollstot$account_category == "HashtagGamer", ]
+
+dim(games)
+
+```
+
+```{r}
+length(unique(games$author))
+table(games$account_category, games$language)
+```
+
+Nos quedamos solo con los de inglés:
+
+```{r}
+games <- games[games$language == "English", ]
+dim(games)
+
+```
+```{r}
+save(games, 
+     file = "hashtag_games.rda")
+```
+
+# Scope del trabajo
+
+1. Tienes nodos ("handles" o "author") como accounts (¿una o varias personas? Nunca lo sabremos), o hastags. 
+2. Tienes conexiones o enlaces (retweets, hashtags compartidos).
+
+Por ejemplo, este hashtag es compartido por muchos handles:  #BritainInOut #GoodbyeUK #RemainINEU #EUref
+
+MUUUUCHO CUIDADO CON MAYUSCULAS Y MINUSCULAS EN HASHTAGS. Por ejemplo:
+#GrowingUpWithObama 
+y
+#growingupwithobama
+
+(este es tambien un ejemplo de hashtag compartido por handles)
+
+3. Puedes elegir entre varias posibilidades de fuerza del enlace: 
+    - número de apariciones del hashtag
+    - número de retweets del hashtag
+
+PREGUNTAS
+
+- ¿Es posible explorar una configuración de la difusión de los hashtags en un grafo -sea de lo que sea (hashtags o handles)?
+- Si fuera así, ¿se puede encontrar la cadena más larga de conexiones o usos de hashtags? ¿Cuáles fueron?
+- ¿Hay algún nodo del grafo con especial relevancia? (generador? retweeteador? un hashtag concreto?)
+
+
+
+Cargamos el objeto generado previamente
+
+```{r}
+load("hashtag_games.rda")
+```
+
+
+```{r}
+myDf <- as.data.table(games)
+```
+
+
+Limpiamos hipervínculos
+
+
+```{r}
+filtroUrl <- "http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
+filtroNuevo <- "http[s]?:"
+filtroNuevo2 <- "http[s]?"
+filtroNuevo3 <- " ?(f|ht)tp(s?)://(.*)[.][a-z]+"
+
+myDf$content <- str_replace_all(myDf$content, pattern = filtroUrl, "")
+myDf$content <- str_replace_all(myDf$content, pattern = filtroNuevo, "")
+myDf$content <- str_replace_all(myDf$content, pattern = filtroNuevo2, "")
+myDf$content <- str_replace_all(myDf$content, pattern = filtroNuevo3, "")
+
+```
+
+
+Limpiamos de emoticonos
+
+
+```{r}
+myDf$content <- gsub("[^\x01-\x7F]", "", myDf$content)
+```
+
+
+Convertimos a fecha el campo "publish date"
+
+
+```{r}
+myDf$publish_date <- as.Date(myDf$publish_date, "%m/%d/%Y")
+```
+
+
+Eliminamos algunos campos del dataframe
+
+
+```{r}
+myDf2 <- (myDf[, c(2:14)])
+```
+
+
+```{r}
+myDf2 <- myDf2[, c(1:5, 10:12)]
+```
+
+
+```{r}
+firstCorpus <- corpus(myDf2$content)
+docvars(firstCorpus, "date") <- myDf2$publish_date
+docvars(firstCorpus, "author") <- myDf2$author
+firstTokens <- tokens(firstCorpus, remove_punct = TRUE)
+```
+
+
+Vamos a ver los 100 primeros términos más repetidos.
+
+
+```{r}
+firstDfm <- dfm(firstTokens)
+topfeatures(firstDfm, 100)
+```
+
+
+Salen muchas preposiciones y términos que no aportan significado alguno. Por tanto, vamos a aplicar stopwords del diccionario nltk, a ver si nos filtra todo, evitando así tener que crearnos nuestras stopwords.
+
+
+```{r}
+secondDfm <- dfm_remove(firstDfm, stopwords("english", source = "nltk"))
+topfeatures(secondDfm, 100)
+```
+
+Podemos ver que a pesar de ser tweets "de juego", sigue estando el tema político de fondo, estando los términos "trump" y "hillary" muy presentes, además de hashtagas evidentemente políticos, como "obamaswishlist".
+
+También vemos que salen número o contracciones en estos términos, así que, para obtener términos más representativos, vamos a hacer nuestras propias stopwords.
+
+
+```{r}
+myStopwords <- c(stopwords(language = "en", source = "nltk"),
+                 "put",
+                 "i'm",
+                 "can",
+                 "we're",
+                 "that's",
+                 "even",
+                 "i'd",
+                 "can't",
+                 "still",
+                 "get",
+                 "would",
+                 "oh",
+                 "ever",
+                 "1",
+                 "2",
+                 "3",
+                 "4",
+                 "5",
+                 "6",
+                 "7",
+                 "8",
+                 "9")
+```
+
+
+Vamos a filtrar más mediante el uso de unas stopword propias, a ver si obtenemos términos más significativos.
+
+
+```{r}
+thirdDfm <- dfm_remove(firstDfm, myStopwords)
+topfeatures(thirdDfm, 100)
+```
+
+
+100 términos más repetidos, tanto siendo hashtags como si no.
+
+
+Ahora haremos un análisis de sentimientos.
+
+
+```{r}
+tokens2 <- tokens_select(firstTokens, pattern = myStopwords, selection = "remove")
+```
+
+
+```{r}
+toks_dictionary <- tokens_lookup(tokens2, data_dictionary_LSD2015)
+```
+
+
+```{r}
+dfmat_twitter <- dfm(toks_dictionary) %>%
+  dfm_group(groups = date)
+```
+
+
+```{r}
+matplot(dfmat_twitter$date, dfmat_twitter, type = "l", lty = 1, col = 1:2,
+        ylab = "Frequency", xlab = "")
+grid()
+legend("topleft", col = 1:2, legend = colnames(dfmat_twitter), lty = 1, bg = "white")
+```
+
+
+Este gráfico nos muestra que en 2016 hubo un aumento siginificativo de la negatividad en los tweets, que duraría hasta 2017, coincidiendo con el periodo electoral estadounidense.
+
+
+```{r}
+textplot_wordcloud(thirdDfm, max_words = 150, color = "#1067c9")
+```
+
+
+Términos a destacar que aparecen en esta nube...
+Lo primero, @midnight, que es el término que más se repite... @midnight es un "late night show" cómico, en ComedyCentral. Seguramente, fuera el que empezará esto de poner tweets con un hashtag y seguir la broma.
+Lo segundo, los hashtags políticos... Temas como "2016in4words", "probabletrumptweets", "giftideasforpoliticians". "betteralternativetodebates"... son temas en los cuales puedes expresar cualquier pensamiento político, incluso temas muy radicales, bajo el amparo de "es una broma". Además, que salgan estos temas tanto, denota la importancia de estas elecciones de 2016, las cuales se caracterizaron por una gran separación dentro de la población de EEUU.
+Lo tercero, términos que aparecen sin ser hashtags. Aparece "hillary", "america", "president", "black"... Lo destacable de que salgan estos términos es, que pueden haber aparecido tanto en tweets donde había un hashtag político como aquellos donde no.
+
+
+```{r}
+corpus_subset(firstCorpus, 
+              date < '2016-11-08') %>%
+  tokens(remove_punct = TRUE) %>%
+  tokens_remove(myStopwords) %>%
+  dfm() %>%
+  dfm_group(groups = date) %>%
+  dfm_trim(verbose = FALSE) %>%
+  textplot_wordcloud(color = "#1067c9", max_words = 150)
+```
+
+
+```{r}
+corpus_subset(firstCorpus, 
+              date >= '2016-11-08') %>%
+  tokens(remove_punct = TRUE) %>%
+  tokens_remove(myStopwords) %>%
+  dfm() %>%
+  dfm_group(groups = date) %>%
+  dfm_trim(verbose = FALSE) %>%
+  textplot_wordcloud(color = "#1067c9", max_words = 150)
+```
+
+
+Podemos ver que tanto antes de las elecciones como después, los hashtags políticos siguen estando muy presentes.
+
+
+```{r}
+png(file="ClusterDendogramOfAuthors.png",
+    width=5000,
+    height=5200,
+    res = 300,
+    bg = "white")
+
+dfmat_profiles <- dfm_group(thirdDfm, groups = author)
+
+tstat_dist <- as.dist(textstat_dist(dfmat_profiles))
+profiles_clust <- hclust(tstat_dist)
+plot(profiles_clust)
+
+dev.off()
+```
+
+
+Este diagrama nos muestra la similitud entre autores, y podemos ver que hay uno claramente aislado del resto, "WorldOfHashtags". También destacar a "chrixmorgan", "andyhashtagger", "booth_prince" y "danageezus". Esto parece indicar que pueden ser bots. Más adelante confirmaremos esto.
+
+
+```{r}
+dataToRepresent <-  myDf2 %>% group_by(author) %>% tally()
+```
+
+
+```{r}
+dataToRepresent <- dataToRepresent[order(dataToRepresent$n, decreasing = TRUE), c(1,2)]
+```
+
+
+```{r}
+dataToRepresent2 <- dataToRepresent[c(1:15),]
+```
+
+
+```{r}
+ggplot(data = dataToRepresent2, aes(x = author, y = n, fill=as.factor(author))) +
+  ggtitle("Número de tweets de los usuarios MÁS 'habladores'") + 
+  geom_bar(stat = "identity", width = 0.5) + 
+  theme(axis.text.x = element_blank())
+```
+
+
+Aquí vemos a los usuarios que más twittearon de la categoría "Hashtag Games". Vamos a hacer algunos cálculos...
+Un año tiene 365 x 24 = 8760 horas. Esto quiere decir, que en caso del usuario "WorldOfHashtags", escribe unos 3 tweets cada hora de cada día del año. Esto hace sospechar que usuarios como estos sean bots.
+Y es así. "WorldOfHashtags" es una cuenta creada por "Internet Research Agency", una compañia rusa que actúa en representación del gobierno ruso. Curiosamente, esta cuenta solo estuvo activa desde el 22 de Abril de 2015 al 17 de Abril de 2017, coincidiendo de lleno con las elecciones estadounidenses del 2016. 
+Así pues, no solo los bots eran como vimos en clase "RightTrolls" o "LeftTrolls", sino que también atacaban desde este "Hashtag Games".
+Fuente: https://russiatweets.com/author/WORLDOFHASHTAGS
+
+Destacar también unos usuarios que comentamos previamente, "chrixmorgan", "andyhashtagger", "booth_prince" y "danageezus". Si nos fijamos en estos nombres, son aquellos de los que podíamos sospechar que eran bots, y que según esta gráfica, se aumenta la probabilidad de que lo sean. Si son bots, y detrás de ellos está la misma empresa que tras "WorldOfHashtags", la "Internet Research Company".
+
+Por lo tanto, tenemos que estos cinco usuarios que más twittean son bots.
+Fuentes: https://russiatweets.com/author/ANDYHASHTAGGER, https://russiatweets.com/author/CHRIXMORGAN, https://russiatweets.com/author/DANAGEEZUS, https://russiatweets.com/author/BOOTH_PRINCE
+
+Pero, ¿y el resto?
+También son trolls todos ellos, y detrás de ellos la misma empresa, y por tanto el mismo gobierno, el ruso.
+Fuentes: https://russiatweets.com/author/TRACEYHAPPYMOM, https://russiatweets.com/author/BGARNER2107/tweets?page=124, https://www.russiatweets.com/author/CURTISBIGMAN/tweets?page=20, https://russiatweets.com/author/DOMINICVALENT, https://www.russiatweets.com/author/ILIKEBIGBUTTAND/tweets?page=10, https://www.russiatweets.com/author/KATHIEMRR/tweets, https://russiatweets.com/author/LORAGREEEN, https://www.russiatweets.com/author/MELVINSROBERTS/tweets?page=71 
+
+También recomiendo este enlace, donde se pueden ver muchas de estas cuentas creadas por la "Internet Research Agency". https://russiatweets.com/author?page=2
+
+Los enlaces muestran no solo cuando se creo y cerró la cuenta falsa, sino la frecuencia de tweets en función del tiempo y la región donde se llevo a cabo las publicaciones de los tweets.
+
+
+```{r}
+dataToRepresent <- dataToRepresent[order(dataToRepresent$n), c(1,2)]
+```
+
+
+```{r}
+dataToRepresent3 <- dataToRepresent[c(1:15),]
+```
+
+
+```{r}
+ggplot(data = dataToRepresent3, aes(x = author, y = n, fill=as.factor(author))) +
+  ggtitle("Número de tweets de los usuarios MENOS 'habladores'") + 
+  geom_bar(stat = "identity", width = 0.5) + 
+  theme(axis.text.x = element_blank())
+```
+
+
+Vemos aquí los usuarios menos activos de "Hashtag Games". Estos números si se pueden corresponder a personas normales que no fuesen bots.
+
+
+A partir de aquí, vamos a crear un nuevo dataframe desde 0, para solo quedarnos con los hashtags, y eliminar el resto de contenidos. Con este dataframe crearemos los grafos.
+
+
+```{r}
+dfHashtags <- as.data.table(games)
+```
+
+
+Nos quedamos con las menciones. En twitter, si quieres mencionar a otro usuario, se hace mediante la formula @ + nombreDeUsuario.
+
+
+```{r}
+dfHashtags$to <- str_extract(dfHashtags$content, '@\\w+')
+```
+
+
+Quitamos la @ para solo quedarnos con el nombre del usuario.
+
+
+```{r}
+dfHashtags$to <- str_replace_all(dfHashtags$to, "@", "")
+```
+
+
+Convertimos todo a mayúsculas en la columna de destinatario. Esto es para evitar que, por ejemplo, @user, @User y @USER sean distintos, puesto que lo más seguro es que sean el mismo usuario pero mal escrito.
+
+
+```{r}
+dfHashtags$to <- toupper(dfHashtags$to)
+```
+
+
+Lo mismo en la columna de autores
+
+
+```{r}
+dfHashtags$author <- toupper(dfHashtags$author)
+```
+
+
+Extraemos los hashtags, eliminando el resto del contenido.
+
+
+```{r}
+dfHashtags$content <- str_extract(dfHashtags$content, '#\\w+')
+```
+
+
+Nos quedamos solo con tres columnas, la de autor del tweet, mencionado en el tweet, y hashtag del contenido del mensaje.
+
+
+```{r}
+dfHashtags2 <- dfHashtags[, c(2,17,3)]
+```
+
+
+```{r}
+vectorMasHabladores <- dataToRepresent2$author
+```
+
+
+```{r}
+vectorMenosHabladores <- dataToRepresent3$author
+```
+
+
+```{r}
+DfMasHabladores <- subset(dfHashtags2, author %in% vectorMasHabladores)
+```
+
+
+```{r}
+DfMasHabladoresHashtags <- unique(DfMasHabladores[,c(3)])
+```
+
+
+```{r}
+DfMenosHabladores <- subset(dfHashtags2, author %in% vectorMenosHabladores)
+```
+
+
+```{r}
+DfMenosHabladoresHashtags <- unique(DfMenosHabladores[,c(3)])
+```
+
+
+Vamos a ver qué temas tienen en común los 15 que más hablan con los 15 que menos.
+
+
+```{r}
+DfComun <- inner_join(DfMasHabladoresHashtags, DfMenosHabladoresHashtags)
+```
+
+
+Vemos aquí los hashtags o temas comúnes entre los 15 usuarios más activos y los 15 menos activos. Podemos ver que hay varios temas políticos relacionados con las elecciones ("TrumpCampaignSlogans", "UnitedStatesIn3Words", "MakeAMovieHillary"...)
+
+
+```{r}
+DfComun[c(2:46),]
+```
+
+
+```{r}
+dfOnlyHashtags <- dfHashtags2[, c(3)]
+```
+
+
+```{r}
+dataToRepresentHashtags <-  dfOnlyHashtags %>% group_by(content) %>% tally()
+```
+
+
+```{r}
+dataToRepresentHashtags <- dataToRepresentHashtags[order(dataToRepresentHashtags$n, decreasing = TRUE), c(1,2)]
+```
+
+
+```{r}
+dataToRepresentHashtags2 <- dataToRepresentHashtags[c(2:16),]
+```
+
+
+```{r}
+ggplot(data = dataToRepresentHashtags2, aes(x = content, y = n, fill=as.factor(content))) +
+  ggtitle("Hashtags más recurrentes") + 
+  geom_bar(stat = "identity", width = 0.5) + 
+  theme(axis.text.x = element_blank())
+```
+
+
+Podemos ver con este gráfico los hashtags o temas que más se repiten. Teniendo en cuenta que participan según nuestros datos 112 personas, que haya temas que ocurren más de 2000 o 3000 veces, supone que eran usuarios muy activos o cuentas falsas (bots), como hemos visto previamente.
+
+Sorprende que temas más políticos no estén presentes en esta lista, aunque tiene sentido. De esta manera, los bots pueden meter mensajes políticos dentro de temas no políticos, para intentar aparecer neutrales a pesar de tener una agenda claramente definida.
+
+
+Quiero ver ahora, de todos los tweets que hay, en cuántos no hay ningún hashtag.
+
+
+```{r}
+hashtagsValidos <- sum(dataToRepresentHashtags$n[c(2:nrow(dataToRepresentHashtags))])
+noHashtags <- dataToRepresentHashtags$n[1]
+```
+
+
+```{r}
+Titulo <- c("Nº Hashtags", "Nº No Hashtags")
+Valores <- c(hashtagsValidos, noHashtags)
+
+dataframeARepresentar <- data.frame(Titulo, Valores)
+```
+
+
+```{r}
+ggplot(data = dataframeARepresentar, aes(x = Titulo, y = Valores, fill=as.factor(Titulo))) +
+  ggtitle("Número de hashtags vs no hashtags") + 
+  geom_bar(stat = "identity", width = 0.5) + 
+  theme(axis.text.x = element_blank())
+```
+
+
+Mediante este gráfico, podemos ver que entre 30000-40000 personas catalogadas como "Hashtag Gamer", no usaron ningún hashtag para participar en el juego. Esto podría ser porque no eran participantes "directos", sino comentarios a las bromas (en esto consistía el juego) de otros usuarios.
+
+
+```{r}
+corpusHashtags <- corpus(dfHashtags$content)
+tokensHashtags <- tokens(corpusHashtags)
+dfmHashtags <- dfm(tokensHashtags)
+topfeatures(dfmHashtags, 100)
+```
+
+
+Ahora podemos ver los 100 hashtags más relevantes.
+
+
+```{r}
+dfHashtags2$content <- tolower(dfHashtags2$content)
+```
+
+
+Para evitar hacer un grafo a partir de un dataframe de 236092 filas, voy a reducirlo un poco, seleccionando temas políticos.
+
+
+```{r}
+temas_de_interes <- c("#todolistbeforechristmas", "#thingsyoucantignore", "#2016in4words", "#mustbebanned", "#igetdepressedwhen", "#giftideasforpoliticians",
+                      "#rejecteddebatetopics", "#obamaswishlist", "#betteralternativetodebates", "#probabletrumpstweets", "#thingsthatshouldbecensored",
+                      "#obamanextjob", "#idrunforpresidentif", "#trumpsfavoriteheadline", "#ihate____because", "#thingsmoretrustedthanhillary",
+                      "#hillarypickuplines")
+```
+
+
+Pero antes de reducir la búsqueda, quiero ver cómo sería el grafo completo...
+
+He elegido que el grafo sea dirigido, puesto que un usuario menciona a alguien en el tweet, y veo clara una relación entre mencionador y mencionado.
+
+
+```{r}
+grafo2 <- graph_from_data_frame(dfHashtags2, directed = TRUE, vertices = NULL)
+```
+
+
+Reducimos un poco el grafo anterior.
+
+
+```{r}
+grafo3 <- simplify(grafo2)
+```
+
+
+Guardamos ese grafo para poderlo tratar con Gephi.
+Será un grafo enorme, muy difícil de tratar. (3638 nodos y 12942 enlaces)
+
+
+```{r}
+write_graph(grafo3,
+            file = "grafoIntermedio.gml",
+            format = "gml")
+```
+
+
+Ahora sí, aplicamos lo anterior, reducimos los temas a algunos que he considerado de interés.
+
+
+```{r}
+network_final <- subgraph.edges(grafo2,
+                                  which(E(grafo2)$content %in% temas_de_interes),
+                                  delete.vertices = TRUE)
+```
+
+
+Borramos aquellos usuarios NA. Es decir, borramos aquello donde no se mecionase a nadie, pues quiero ver relaciones entre autores de tweets y mencionados.
+
+
+```{r}
+network_final <- delete_vertices(network_final, "NA")
+```
+
+
+Guardamos ese grafo para poder tratarlo con Gephi. De esta manera, tendremos un grafo muy sencillo de tratar (63 nodos y 65 relaciones)
+
+
+```{r}
+write_graph(network_final,
+            file = "grafoFinal1.gml",
+            format = "gml")
+```
+
+
+Este grafo nos sitúa como centro al famoso "WorldOfHashtags", siendo satélites cuentas falsas rusas, a la vez que estas también están conectadas con otras cuentas rusas más en la periferia. Pero lo más curioso, es una de las cuentas que aparecen en la periferia..., "REALDONALDTRUMP", la cuenta de twitter de Donald Trump.
+
+En mi opinión, no da muy buena imagen que dentro de una red en la cual predominan las cuentas falsas rusas, el que saldría elegido presidente esté dentro de esa red.
+
+
+Vamos a calcular algunas métricas sobre este grafo.
+
+
+```{r}
+degreeBots <- degree(network_final)
+degreeBots
+```
+
+
+De 63 nodos, 43 están directamente relacionados con "WorldOfHashtags"
+
+
+```{r}
+EigenvectorCentrality <- evcent(network_final)$vector
+EigenvectorCentrality
+```
+
+La "Eigenvector Centrality" nos da una medida sobre la relevancia de un nodo en la red. Podemos ver que "WorldOfHashtags" tiene una importancia clave dentro de esta red.
+
+
+Lo siguiente a calcular es la "closeness", que nos da una medida del número de pasos necesarios desde un nodo para acceder al resto de ellos.
+
+
+```{r}
+ClosenessBots <- closeness(network_final)
+ClosenessBots
+```
+
+
+Ahora calculamos la authority_score y la hub_score (hacen referencia al valor del contenido del nodo y al valor que tienen los nodos referenciados por otro nodo, respectivamente).
+
+
+```{r}
+authority_score(network_final, scale = TRUE, weights = NULL, options = arpack_defaults)
+```
+
+
+```{r}
+hub_score(network_final, scale = TRUE, weights = NULL, options = arpack_defaults)
+```
+
+
+Corroboramos mediante estas medidas esta relevancia clave de "WorldOfHahstags" dentro de la red.
+
+
+Cálculo de comunidades mediante el algoritmo Louvain. Hago todo esto con igraph, pero me parece mucho más sencillo con Gephi.
+
+
+```{r}
+networkBotsUndirected <- as.undirected(network_final, mode = "collapse")
+enronLouvain <- cluster_louvain(networkBotsUndirected)
+
+plot(enronLouvain, network_final)
+```
+
+Vamos a hacer este mismo grafo, pero ahora con solo un hashtag, el que más se repetía.
+
+
+```{r}
+hashtag_de_interes <- c("#ToDoListBeforeChristmas")
+```
+
+
+```{r}
+network_hashtag <- subgraph.edges(grafo2,
+                                  which(E(grafo2)$content %in% hashtag_de_interes),
+                                  delete.vertices = TRUE)
+```
+
+
+```{r}
+network_hashtag <- delete_vertices(network_hashtag, "NA")
+```
+
+
+```{r}
+write_graph(network_hashtag,
+            file = "grafoHashtag.gml",
+            format = "gml")
+```
+
+
+Ahora haré algo parecido a lo que me enviaste por mail...
+Quiero ver la relación de usuarios y temas.
+
+
+```{r}
+dfHashtags <- as.data.table(games)
+
+dfHashtags <- dfHashtags[ , c(2:3, 6, 8:10, 11 )]
+dfHashtags$content <- tolower(dfHashtags$content)
+dfHashtags$content <- str_extract(dfHashtags$content, '#\\w+')
+
+dfHashtags <- dfHashtags[which(!is.na(dfHashtags$content)), ]
+```
+
+
+```{r}
+hashtags <- dfHashtags %>%
+  group_by(content)
+
+hashtags_m <- hashtags[ , c(1,2)]
+View(hashtags_m)
+length(unique(hashtags_m$content))
+```
+
+
+Voy a seleccionar únicamente a los cinco usuarios más "habladores", que eran los bots rusos...
+
+
+```{r}
+dfReducido <- subset(hashtags_m, author %in% dataToRepresent2$author[c(1:5)])
+```
+
+
+Elimino filas duplicadas, para simplificar el grafo. Quiero ver los temas como nodos únicos, no que aparezca un mismo tema como múltiples nodos.
+
+
+```{r}
+dfReducidoFinal <- distinct(dfReducido)
+```
+
+
+Guardo el grafo en local para tratarlo con Gephi.
+
+
+```{r}
+grafo2 <- graph_from_data_frame(dfReducidoFinal, directed = TRUE, vertices = NULL)
+
+write_graph(grafo2,
+            file = "grafoFinal2.gml",
+            format = "gml")
+```
+
+
+En este grafo podemos ver como las cinco cuentas falsas rusas más activas escogían una gran diversidad de temas.
+
+
+En conclusión, tenemos que los bots rusos influyeron de todas las maneras posibles, no solo haciendo tweets de tendencia política marcada, sino aprovechando la organización de un juego de un programa americano para también atacar desde ese frente, para cumplir con su agenda.
+Al final, todo esto hizo que Donald Trump fuese escogido como el cuadragésimo quinto presidente de los Estados Unidos, más afín al presidente ruso, Vladimir Putin.
+Los rusos hicieron todo aquello que estaba en su mano para ayudar a la elección de Trump, atacando desde todo frente posible.
